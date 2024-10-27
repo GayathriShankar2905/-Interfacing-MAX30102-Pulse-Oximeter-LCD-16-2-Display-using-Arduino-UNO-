@@ -1,0 +1,89 @@
+#include <Wire.h>
+
+// MAX30102 I2C Address
+#define MAX30102_ADDRESS 0x57
+
+// Function prototypes
+void readData(int* heartRate, int* spo2);
+int calculateHeartRate(uint32_t redData, uint32_t irData);
+int calculateSpO2(uint32_t redData, uint32_t irData);
+
+// Function prototypes for LCD
+void lcdInit();
+void lcdPrint(const char* message);
+
+void setup() {
+    Serial.begin(115200);
+    Wire.begin();
+    lcdInit(); // Initialize LCD
+}
+
+void loop() {
+    int heartRate = 0;
+    int spo2 = 0;
+
+    readData(&heartRate, &spo2);
+
+    // Print values to the serial monitor
+    Serial.print("Heart Rate: ");
+    Serial.print(heartRate);
+    Serial.print(" bpm, SpO2: ");
+    Serial.print(spo2);
+    Serial.println(" %");
+
+    // Display on the LCD
+    lcdPrint("HR: ");
+    lcdPrint(String(heartRate).c_str());
+    lcdPrint(" bpm");
+
+    lcdPrint("SpO2: ");
+    lcdPrint(String(spo2).c_str());
+    lcdPrint(" %");
+
+    delay(1000); // Wait for 1 second before next reading
+}
+
+void readData(int* heartRate, int* spo2) {
+    uint32_t redData = 0; // Initialize red data variable
+    uint32_t irData = 0;  // Initialize IR data variable
+
+    Wire.beginTransmission(MAX30102_ADDRESS);
+    Wire.write(0x07); // Pointer to the first sample data register
+    Wire.endTransmission(false);
+    Wire.requestFrom(MAX30102_ADDRESS, 6); // Request 6 bytes: 3 for red and 3 for IR
+
+    if (Wire.available() == 6) {
+        // Read the red channel data
+        redData = ((uint32_t)Wire.read() << 16) | ((uint32_t)Wire.read() << 8) | (uint32_t)Wire.read();
+        // Read the IR channel data
+        irData = ((uint32_t)Wire.read() << 16) | ((uint32_t)Wire.read() << 8) | (uint32_t)Wire.read();
+    }
+
+    // Process data to calculate heart rate and SpO2
+    *heartRate = calculateHeartRate(redData, irData); // Implement your heart rate calculation logic
+    *spo2 = calculateSpO2(redData, irData); // Implement your SpO2 calculation logic
+}
+
+// Dummy function for calculating heart rate
+int calculateHeartRate(uint32_t redData, uint32_t irData) {
+    // Placeholder logic, replace with actual heart rate calculation
+    return (redData % 100) + 60; // Example: Heart rate fluctuates between 60-159 bpm
+}
+
+// Dummy function for calculating SpO2
+int calculateSpO2(uint32_t redData, uint32_t irData) {
+    // Placeholder logic, replace with actual SpO2 calculation
+    return (irData % 100) + 90; // Example: SpO2 fluctuates between 90-189%
+}
+
+// LCD functions (stub for demonstration)
+void lcdInit() {
+    // Initialize your LCD here, configure I2C if needed
+    Serial.println("LCD Initialized");
+}
+
+void lcdPrint(const char* message) {
+    // Print the message on the LCD
+    Serial.print(message);
+    Serial.print(" "); // Just for the example, replace with actual LCD printing logic
+}
