@@ -1,89 +1,175 @@
 #include <Wire.h>
+#include "MAX30105.h"
 
-// MAX30102 I2C Address
-#define MAX30102_ADDRESS 0x57
+// Define the I2C address for the LCD
+#define LCD_ADDRESS 0x27 // Change if your address is different
+
+// Define the MAX30102 object
+MAX30105 particleSensor;
+
+// LCD variables
+const int LCD_WIDTH = 16; // Number of columns on your LCD
+const int LCD_HEIGHT = 2; // Number of rows on your LCD
+
+// Commands for the LCD
+#define LCD_BACKLIGHT 0x08
+#define LCD_NO_BACKLIGHT 0x00
+#define ENABLE_BIT 0x04
+
+// Command bytes
+#define LCD_CLEAR_DISPLAY 0x01
+#define LCD_RETURN_HOME 0x02
+#define LCD_ENTRY_MODE_SET 0x04
+#define LCD_DISPLAY_CONTROL 0x08
+#define LCD_FUNCTION_SET 0x20
+
+void lcdSendCommand(uint8_t command);
+void lcdSendData(uint8_t data);
+void lcdSendByte(uint8_t value, uint8_t mode);
+void lcdWriteNibble(uint8_t nibble);
+void lcdPulseEnable(uint8_t nibble);
+void lcdInit();
+void lcdSetCursor(int col, int row);
+void lcdPrint(const char* message);
 
 // Function prototypes
-void readData(int* heartRate, int* spo2);
-int calculateHeartRate(uint32_t redData, uint32_t irData);
-int calculateSpO2(uint32_t redData, uint32_t irData);
-
-// Function prototypes for LCD
-void lcdInit();
-void lcdPrint(const char* message);
+void initLCD();
+void printToLCD(const String& text, int row);
+float calculateHeartRate();
+float calculateSpO2();
 
 void setup() {
     Serial.begin(115200);
     Wire.begin();
-    lcdInit(); // Initialize LCD
+
+    // Initialize the MAX30102 sensor
+    if (!particleSensor.begin()) {
+        Serial.println("MAX30102 not found. Check connections.");
+        while (1);
+    }
+
+    // Initialize the LCD
+    lcdInit(); // Use the lcdInit function for your LCD
+
+    // Configure the sensor
+    particleSensor.setup(); 
+    particleSensor.setPulseAmplitudeRed(0x0A); // Set red LED amplitude
+    particleSensor.setPulseAmplitudeGreen(0x0A); // Set green LED amplitude
+
+    // Display initial message on LCD
+    lcdSetCursor(0, 0);
+    lcdPrint("Initializing...");
+    delay(2000); // Delay to show initializing message
 }
 
 void loop() {
-    int heartRate = 0;
-    int spo2 = 0;
+    long irValue = particleSensor.getIR(); // Read the IR value
 
-    readData(&heartRate, &spo2);
+    // Check if we have a valid reading
+    if (irValue > 50000) { // Adjust this threshold based on your requirements
+        float bpm = calculateHeartRate();
+        float spo2 = calculateSpO2();
 
-    // Print values to the serial monitor
-    Serial.print("Heart Rate: ");
-    Serial.print(heartRate);
-    Serial.print(" bpm, SpO2: ");
-    Serial.print(spo2);
-    Serial.println(" %");
+        // Print values to the Serial Monitor
+        Serial.print("IR Value: ");
+        Serial.println(irValue);
+        Serial.print("BPM: ");
+        Serial.println(bpm);
+        Serial.print("SpO2: ");
+        Serial.println(spo2);
 
-    // Display on the LCD
-    lcdPrint("HR: ");
-    lcdPrint(String(heartRate).c_str());
-    lcdPrint(" bpm");
-
-    lcdPrint("SpO2: ");
-    lcdPrint(String(spo2).c_str());
-    lcdPrint(" %");
-
-    delay(1000); // Wait for 1 second before next reading
-}
-
-void readData(int* heartRate, int* spo2) {
-    uint32_t redData = 0; // Initialize red data variable
-    uint32_t irData = 0;  // Initialize IR data variable
-
-    Wire.beginTransmission(MAX30102_ADDRESS);
-    Wire.write(0x07); // Pointer to the first sample data register
-    Wire.endTransmission(false);
-    Wire.requestFrom(MAX30102_ADDRESS, 6); // Request 6 bytes: 3 for red and 3 for IR
-
-    if (Wire.available() == 6) {
-        // Read the red channel data
-        redData = ((uint32_t)Wire.read() << 16) | ((uint32_t)Wire.read() << 8) | (uint32_t)Wire.read();
-        // Read the IR channel data
-        irData = ((uint32_t)Wire.read() << 16) | ((uint32_t)Wire.read() << 8) | (uint32_t)Wire.read();
+        // Display values on the LCD
+        lcdSetCursor(0, 0);
+        lcdPrint(("SpO2: " + String(spo2) + "%").c_str());
+        lcdSetCursor(0, 1);
+        lcdPrint(("BPM: " + String(bpm)).c_str());
+    } else {
+        Serial.println("No valid finger detected.");
+        lcdSetCursor(0, 0);
+        lcdPrint("No Finger");
+        lcdSetCursor(0, 1);
+        lcdPrint("Detected");
     }
 
-    // Process data to calculate heart rate and SpO2
-    *heartRate = calculateHeartRate(redData, irData); // Implement your heart rate calculation logic
-    *spo2 = calculateSpO2(redData, irData); // Implement your SpO2 calculation logic
+    delay(1000); // Adjust the delay for your needs
 }
 
-// Dummy function for calculating heart rate
-int calculateHeartRate(uint32_t redData, uint32_t irData) {
-    // Placeholder logic, replace with actual heart rate calculation
-    return (redData % 100) + 60; // Example: Heart rate fluctuates between 60-159 bpm
-}
-
-// Dummy function for calculating SpO2
-int calculateSpO2(uint32_t redData, uint32_t irData) {
-    // Placeholder logic, replace with actual SpO2 calculation
-    return (irData % 100) + 90; // Example: SpO2 fluctuates between 90-189%
-}
-
-// LCD functions (stub for demonstration)
+// Initialize the LCD
 void lcdInit() {
-    // Initialize your LCD here, configure I2C if needed
-    Serial.println("LCD Initialized");
+    delay(50);               // Wait for more than 40ms after power-up
+    lcdSendByte(0x03, 0);   // Initialize in 4-bit mode
+    delay(5);
+    lcdSendByte(0x03, 0);
+    delayMicroseconds(150);
+    lcdSendByte(0x03, 0);
+    lcdSendByte(0x02, 0);   // Set to 4-bit mode
+
+    // Set number of lines and font
+    lcdSendCommand(LCD_FUNCTION_SET | 0x08 | 0x00); // 4-bit, 2 lines, 5x8 dots
+    // Turn on display, cursor off, blink off
+    lcdSendCommand(LCD_DISPLAY_CONTROL | 0x04);
+    // Clear display
+    lcdSendCommand(LCD_CLEAR_DISPLAY);
+    delay(2);
+    // Entry mode set: increment cursor, no shift
+    lcdSendCommand(LCD_ENTRY_MODE_SET | 0x02);
 }
 
+// LCD commands and data functions
+void lcdSendCommand(uint8_t command) {
+    lcdSendByte(command, 0);
+}
+
+void lcdSendData(uint8_t data) {
+    lcdSendByte(data, 1);
+}
+
+void lcdSendByte(uint8_t value, uint8_t mode) {
+    uint8_t highNibble = value & 0xF0;
+    uint8_t lowNibble = (value << 4) & 0xF0;
+    lcdWriteNibble((highNibble) | mode);
+    lcdWriteNibble((lowNibble) | mode);
+}
+
+void lcdWriteNibble(uint8_t nibble) {
+    Wire.beginTransmission(LCD_ADDRESS);
+    Wire.write(nibble | LCD_BACKLIGHT); // With backlight on
+    Wire.endTransmission();
+    lcdPulseEnable(nibble | LCD_BACKLIGHT);
+}
+
+void lcdPulseEnable(uint8_t nibble) {
+    Wire.beginTransmission(LCD_ADDRESS);
+    Wire.write(nibble | ENABLE_BIT); // Enable high
+    Wire.endTransmission();
+    delayMicroseconds(1);            // Wait for enable pulse
+    Wire.beginTransmission(LCD_ADDRESS);
+    Wire.write(nibble & ~ENABLE_BIT); // Enable low
+    Wire.endTransmission();
+    delayMicroseconds(50);
+}
+
+// Set cursor position
+void lcdSetCursor(int col, int row) {
+    int rowOffsets[] = {0x00, 0x40}; // Memory address offsets for each row
+    lcdSendCommand(0x80 | (col + rowOffsets[row]));
+}
+
+// Print message to LCD
 void lcdPrint(const char* message) {
-    // Print the message on the LCD
-    Serial.print(message);
-    Serial.print(" "); // Just for the example, replace with actual LCD printing logic
+    while (*message) {
+        lcdSendData(*message++);
+    }
+}
+
+// Placeholder for heart rate calculation
+float calculateHeartRate() {
+    // Replace with actual heart rate calculation from your MAX30105 sensor
+    return random(60, 100); // Simulated value for demonstration
+}
+
+// Placeholder for SpO2 calculation
+float calculateSpO2() {
+    // Replace with actual SpO2 calculation from your MAX30105 sensor
+    return random(90, 100); // Simulated value for demonstration
 }
